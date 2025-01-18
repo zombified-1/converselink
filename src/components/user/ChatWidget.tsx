@@ -3,13 +3,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageSquare, X, Send } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/components/ui/use-toast";
 
 interface ChatWidgetProps {
   companyName?: string;
 }
 
 interface Message {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   content: string;
 }
 
@@ -24,24 +25,58 @@ export const ChatWidget = ({ companyName = "AI Assistant" }: ChatWidgetProps) =>
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsFormSubmitted(true);
-    setMessages([
-      {
-        role: 'system',
-        content: `You are a helpful AI assistant for ${companyName}. The user's name is ${formData.name}.`
-      },
-      {
-        role: 'assistant',
-        content: `Hello ${formData.name}! How can I help you today?`
-      }
-    ]);
+    try {
+      // Create a new conversation
+      const { data: conversation, error: convError } = await supabase
+        .from('conversations')
+        .insert({
+          user_name: formData.name,
+          user_email: formData.email,
+          user_phone: formData.phone,
+          page_title: document.title,
+        })
+        .select()
+        .single();
+
+      if (convError) throw convError;
+
+      setConversationId(conversation.id);
+      setIsFormSubmitted(true);
+
+      // Insert initial system message
+      const { error: msgError } = await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conversation.id,
+          content: `Hello ${formData.name}! How can I help you today?`,
+          sender_type: 'company',
+        });
+
+      if (msgError) throw msgError;
+
+      setMessages([
+        {
+          role: 'assistant',
+          content: `Hello ${formData.name}! How can I help you today?`
+        }
+      ]);
+    } catch (error) {
+      console.error('Error starting conversation:', error);
+      toast({
+        title: "Error",
+        description: "Failed to start conversation. Please try again.",
+        variant: "destructive",
+      });
+    }
   };
 
   const sendMessage = async () => {
-    if (!inputMessage.trim()) return;
+    if (!inputMessage.trim() || !conversationId) return;
 
     const userMessage = { role: 'user' as const, content: inputMessage };
     setMessages(prev => [...prev, userMessage]);
@@ -49,21 +84,38 @@ export const ChatWidget = ({ companyName = "AI Assistant" }: ChatWidgetProps) =>
     setIsLoading(true);
 
     try {
+      // Store user message
+      await supabase
+        .from('messages')
+        .insert({
+          conversation_id: conversationId,
+          content: userMessage.content,
+          sender_type: 'user',
+        });
+
+      // Get AI response
       const { data, error } = await supabase.functions.invoke('chat-with-ai', {
-        body: { messages: [...messages, userMessage] }
+        body: { 
+          messages: [...messages, userMessage].map(msg => ({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content
+          })),
+          conversationId
+        }
       });
 
       if (error) throw error;
 
-      if (data.choices && data.choices[0]?.message) {
-        setMessages(prev => [...prev, data.choices[0].message]);
+      if (data.content) {
+        setMessages(prev => [...prev, { role: 'assistant', content: data.content }]);
       }
     } catch (error) {
       console.error('Error sending message:', error);
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.'
-      }]);
+      toast({
+        title: "Error",
+        description: "Failed to send message. Please try again.",
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
@@ -145,8 +197,8 @@ export const ChatWidget = ({ companyName = "AI Assistant" }: ChatWidgetProps) =>
                 <div
                   className={`rounded-lg p-3 max-w-[80%] ${
                     message.role === 'user'
-                      ? 'bg-primary text-white'
-                      : 'bg-gray-100 text-gray-800'
+                      ? 'bg-chat-user text-gray-800'
+                      : 'bg-chat-company text-white'
                   }`}
                 >
                   <p>{message.content}</p>
