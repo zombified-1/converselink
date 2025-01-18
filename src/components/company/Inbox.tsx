@@ -82,7 +82,15 @@ export const Inbox = () => {
       return;
     }
 
-    setMessages(data || []);
+    // Type guard to ensure sender_type is either 'user' or 'company'
+    const validMessages = (data || []).map(msg => ({
+      ...msg,
+      sender_type: msg.sender_type === 'user' || msg.sender_type === 'company' 
+        ? msg.sender_type 
+        : 'user' // fallback to 'user' if invalid type
+    })) as Message[];
+
+    setMessages(validMessages);
   };
 
   const handleConversationSelect = async (conversation: Conversation) => {
@@ -120,7 +128,7 @@ export const Inbox = () => {
         .insert({
           conversation_id: selectedConversation.id,
           content: replyMessage,
-          sender_type: 'company',
+          sender_type: 'company' as const,
         });
 
       if (messageError) throw messageError;
@@ -156,7 +164,6 @@ export const Inbox = () => {
 
   return (
     <div className="flex h-screen bg-white">
-      {/* Sidebar */}
       <div className="w-80 border-r border-gray-200">
         <div className="p-4">
           <div className="relative">
@@ -202,8 +209,6 @@ export const Inbox = () => {
           ))}
         </div>
       </div>
-
-      {/* Main Content */}
       <div className="flex-1 flex flex-col">
         <div className="border-b border-gray-200 p-4 flex justify-between items-center">
           <div className="flex items-center space-x-4">
