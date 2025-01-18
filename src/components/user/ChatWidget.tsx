@@ -1,13 +1,19 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { MessageSquare, X, Send } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface ChatWidgetProps {
   companyName?: string;
 }
 
-export const ChatWidget = ({ companyName = "Support" }: ChatWidgetProps) => {
+interface Message {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+}
+
+export const ChatWidget = ({ companyName = "AI Assistant" }: ChatWidgetProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isFormSubmitted, setIsFormSubmitted] = useState(false);
   const [formData, setFormData] = useState({
@@ -15,10 +21,52 @@ export const ChatWidget = ({ companyName = "Support" }: ChatWidgetProps) => {
     email: "",
     phone: "",
   });
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsFormSubmitted(true);
+    setMessages([
+      {
+        role: 'system',
+        content: `You are a helpful AI assistant for ${companyName}. The user's name is ${formData.name}.`
+      },
+      {
+        role: 'assistant',
+        content: `Hello ${formData.name}! How can I help you today?`
+      }
+    ]);
+  };
+
+  const sendMessage = async () => {
+    if (!inputMessage.trim()) return;
+
+    const userMessage = { role: 'user' as const, content: inputMessage };
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage("");
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabase.functions.invoke('chat-with-ai', {
+        body: { messages: [...messages, userMessage] }
+      });
+
+      if (error) throw error;
+
+      if (data.choices && data.choices[0]?.message) {
+        setMessages(prev => [...prev, data.choices[0].message]);
+      }
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setMessages(prev => [...prev, {
+        role: 'assistant',
+        content: 'Sorry, I encountered an error. Please try again.'
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   if (!isOpen) {
@@ -87,18 +135,46 @@ export const ChatWidget = ({ companyName = "Support" }: ChatWidgetProps) => {
       ) : (
         <div className="flex flex-col h-96">
           <div className="flex-1 p-4 overflow-y-auto space-y-4">
-            <div className="flex justify-start">
-              <div className="bg-chat-user rounded-lg p-3 max-w-[80%]">
-                <p className="text-gray-800">
-                  Hello! How can we help you today?
-                </p>
+            {messages.map((message, index) => (
+              <div
+                key={index}
+                className={`flex ${
+                  message.role === 'user' ? 'justify-end' : 'justify-start'
+                }`}
+              >
+                <div
+                  className={`rounded-lg p-3 max-w-[80%] ${
+                    message.role === 'user'
+                      ? 'bg-primary text-white'
+                      : 'bg-gray-100 text-gray-800'
+                  }`}
+                >
+                  <p>{message.content}</p>
+                </div>
               </div>
-            </div>
+            ))}
+            {isLoading && (
+              <div className="flex justify-start">
+                <div className="bg-gray-100 rounded-lg p-3">
+                  <p className="text-gray-500">Thinking...</p>
+                </div>
+              </div>
+            )}
           </div>
           <div className="p-4 border-t">
             <div className="flex space-x-2">
-              <Input placeholder="Type your message..." />
-              <Button size="icon">
+              <Input
+                placeholder="Type your message..."
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendMessage();
+                  }
+                }}
+              />
+              <Button size="icon" onClick={sendMessage} disabled={isLoading}>
                 <Send className="h-4 w-4" />
               </Button>
             </div>
